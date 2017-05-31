@@ -1,0 +1,127 @@
+---
+
+- name: create load-balancers
+  ec2_lb:
+   name: dev_elb
+   state: present
+   zones:
+    - us-east-1a
+    - us-east-1d
+   listerners:
+    - protocol: http
+      load_balancer_port: 80
+      instance_port: 80
+      proxy_protocol: true
+   register: develb
+
+- name: set fact for elb
+  set_fact: ec2_elb_name = "{{ develb.results[0].name }}"
+
+- name: create lauch configuration
+  ec2_lc:
+   name: 
+   image_id:
+   key_name:
+   region:
+   security_groups:
+   instance_profile_name:
+   instance_type:
+   instance_tags:
+    Name:
+    Environment:
+    Owner:
+    role:
+   instance_monitoring:
+   assign_public_ip:
+   volumes:
+   state:
+   user_data:
+  register: aws_lc
+
+
+- name: set fact for launch configuration
+  set_fact: ec2_launch_config_name = "{{ aws_lc.results[0].name }"
+
+- name: creating Auto scaling group
+  ec2_asg:
+   name:
+   load_balancers: "{{ ec2_elb_name }}"
+   availability_zones:
+   launch_config_name: "{{ec2_launch_config_name}}"
+   min_size:
+   max_size:
+   desired_capacity:
+   vpc_zone_identifier:
+   tags:
+    Name:
+    Environment:
+    Owner:
+    role:
+   replace_all_instances: yes
+  register: aws_asg
+
+- name: Set fact for ASG
+  set_fact: ec2_ASG_name = "{{ aws_asg.results[0].name }}"
+
+- name: configure scaling policy
+  ec2_scaling_policy:
+   region:
+   name: "{{ item.name }}"
+   asg_name: "{{ ec2_ASG_name }}"
+   state: present
+   adjustment_type: "{{ item.adjustment_type }}"
+   scaling_adjustment: "{{ item.adjustment_type }}"
+   min_adjustment_step: "{{ item.min_adjustment_step }}"
+   cooldown: "{{ item.cooldown }}"
+  with_items:
+   - name: "Increase Group Size"
+     adjustment_type: "ChangeInCapacity"
+     scaling_adjustment: +1
+     min_adjustment_step: 1
+     cooldown: 180
+   - name: "Decrease Group Size"
+     adjustment_type: "ChangeInCapacity"
+     scaling_adjustment: -1
+     min_adjustment_step: 1
+     cooldown: 300
+  register: scaling_policy_result
+
+- name: configure Metric alarms and link to scaling up policy
+  ec2_metric_alarm:
+   region:
+   name: "{{ec2_ASG_name}}_scaleup"
+   state: present
+   metric: "CPUUtilization"
+   namespace: "AWS/EC2"
+# trigger sclaing policy when cpu utilization is higher than 50% for 60 sec of period for 5 times. i.e 5 mins
+   statistic: "Average"
+   comparison: ">="
+   threshold: 50.0
+   period: 60
+   evaluation_periods: 5
+   unit: "Percent"
+   dimension:
+    AutoScalingGroupName: "{{ ec2_ASG_name }}"
+   alarm_actions: "{{ scaling_policy_result.results[0].arn }}"
+   when: max_size > 1
+   register: scaleup_metric_result
+
+- name: Configure Metric alarms and link to scaling down policy
+  ec2_metric_alarm:
+   region:
+   name: "{{ec2_ASG_name}}_scaledown"
+   state: present
+   metric: "CPUUtilization"
+   namespace: "AWS/EC2"
+# trigger sclaing policy when cpu utilization is less than 20% for 60 sec of period for 5 times. i.e 5 mins
+   statistic: "Average"
+   comparison: "<="
+   threshold: 20.0
+   period: 60
+   evaluation_periods: 5
+   unit: "percent"
+   dimension:
+    AutoScalingGroupName: "{{ ec2_ASG_name }}"
+   alarm_actions: "{{ scaling_policy_result.results[0].arn }}"
+   when: max_size > 1
+   register: scaledown_metric_result

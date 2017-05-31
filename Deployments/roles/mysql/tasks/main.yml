@@ -1,0 +1,5 @@
+---
+# tasks file for mysql
+
+- name: Install mysql
+  yum: name=mysql update_cache=yes state=latest

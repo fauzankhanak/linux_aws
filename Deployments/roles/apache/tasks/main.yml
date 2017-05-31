@@ -1,0 +1,6 @@
+---
+# tasks file for apache
+
+- name: install apache latest version
+  apt: name=apache2 update_cache=yes state=latest
+
